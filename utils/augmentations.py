@@ -310,6 +310,33 @@ def mixup(im, labels, im2, labels2):
     return im, labels
 
 
+def mixup_rgbt(imgs, labels, imgs2, labels2):
+    """
+    Applies MixUp augmentation to RGBT (multi-modal) images by blending both modalities and labels.
+    
+    Args:
+        imgs: List of images [lwir, visible] for first sample
+        labels: Labels for first sample
+        imgs2: List of images [lwir, visible] for second sample  
+        labels2: Labels for second sample
+        
+    Returns:
+        Mixed images and concatenated labels
+    """
+    r = np.random.beta(32.0, 32.0)  # mixup ratio, alpha=beta=32.0
+    
+    # Mix both modalities with same ratio
+    mixed_imgs = []
+    for img1, img2 in zip(imgs, imgs2):
+        mixed_img = (img1 * r + img2 * (1 - r)).astype(np.uint8)
+        mixed_imgs.append(mixed_img)
+    
+    # Concatenate labels
+    mixed_labels = np.concatenate((labels, labels2), 0)
+    
+    return mixed_imgs, mixed_labels
+
+
 def box_candidates(box1, box2, wh_thr=2, ar_thr=100, area_thr=0.1, eps=1e-16):
     """
     Filters bounding box candidates by minimum width-height threshold `wh_thr` (pixels), aspect ratio threshold

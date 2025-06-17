@@ -167,8 +167,21 @@ class ComputeLoss:
                 # do not calculate objectness loss
                 ign_idx = (tcls[i] == -1) & (iou > self.hyp["iou_t"])
                 keep = ~ign_idx
-                b, a, gj, gi, iou = b[keep], a[keep], gj[keep], gi[keep], iou[keep]
-
+                # b, a, gj, gi, iou = b[keep], a[keep], gj[keep], gi[keep], iou[keep]
+                if (iou.numel() == 0 or keep.numel() == 0 or iou.dim() == 0 or keep.sum() == 0 or
+                    b.numel() == 0 or a.numel() == 0 or gj.numel() == 0 or gi.numel() == 0):
+                    continue
+                # 추가 안전 검사: tensor 차원 및 크기 일치 확인
+                try:
+                    if len(b) != len(keep) or len(iou) != len(keep):
+                        continue
+                    keep_indices = keep.nonzero().squeeze(-1)
+                    if keep_indices.numel() == 0:
+                        continue
+                    b, a, gj, gi, iou = b[keep], a[keep], gj[keep], gi[keep], iou[keep]
+                except (IndexError, RuntimeError) as e:
+                    print(f"Warning: Skipping batch due to indexing error: {e}")
+                    continue
                 tobj[b, a, gj, gi] = iou  # iou ratio
 
                 # Classification

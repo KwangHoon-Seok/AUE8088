@@ -635,7 +635,7 @@ def evaluate(test_annotation_file: str, user_submission_file: str, phase_codenam
 
     print('')
     # eval_result['night'].params.imgIds = imgIds[1455:]
-    eval_result['day'].params.imgIds = [ii for ii, img in kaistGt.imgs.items() if get_time_of_day(img['im_name']) == 'night']
+    eval_result['night'].params.imgIds = [ii for ii, img in kaistGt.imgs.items() if get_time_of_day(img['im_name']) == 'night']
     eval_result['night'].evaluate(0)
     eval_result['night'].accumulate()
     MR_night = eval_result['night'].summarize(0, subsetStr='Night')
@@ -688,17 +688,17 @@ def draw_all(eval_results, filename='figure.jpg'):
     except Exception as e:
         print(e)
 
-    filename += '' if filename.endswith('.jpg') or filename.endswith('.png') else '.jpg'
+    filename += '' if filename.endswith('.jpg') or filename.endswith('.png') else '.png'
     plt.savefig(filename)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='eval models')
-    parser.add_argument('--annFile', type=str, default='evaluation_script/KAIST_annotation.json',
+    parser.add_argument('--annFile', type=str, default='/home/seok/Deep_learning_project/AUE8088/utils/eval/KAIST_val_annotation_labeled.json',
                         help='Please put the path of the annotation file. Only support json format.')
-    parser.add_argument('--rstFiles', type=str, nargs='+', default=['evaluation_script/MLPD_result.json'],
+    parser.add_argument('--rstFiles', type=str, nargs='+', default=['/home/seok/Deep_learning_project/AUE8088/runs/train/new_split_test/epoch29_predictions.json'],
                         help='Please put the path of the result file. Only support json, txt format.')
-    parser.add_argument('--evalFig', type=str, default=None,
+    parser.add_argument('--evalFig', type=str, default='/home/seok/Deep_learning_project/AUE8088/Miss_rate/new_splitdata_epoch29_predictions.png',
                         help='Please put the output path of the Miss rate versus false positive per-image (FPPI) curve')
     args = parser.parse_args()
 

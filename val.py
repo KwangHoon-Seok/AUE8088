@@ -208,6 +208,7 @@ def run(
             rect=rect,
             workers=workers,
             prefix=colorstr(f"{task}: "),
+            rgbt_input=True,  # Enable RGB-T input processing
         )[0]
 
     seen = 0
@@ -228,7 +229,8 @@ def run(
         callbacks.run("on_val_batch_start")
         with dt[0]:
             if isinstance(ims, list):
-                ims = [im.to(device, non_blocking=True).float() / 255 for im in ims]    # For RGB-T input
+                # RGB-T input: keep as list for MultiStreamConv processing
+                ims = [im.to(device, non_blocking=True).float() / 255 for im in ims]
                 nb, _, height, width = ims[0].shape  # batch size, channels, height, width
                 if half:
                     ims = [im.half() for im in ims]
@@ -279,12 +281,14 @@ def run(
             if single_cls:
                 pred[:, 5] = 0
             predn = pred.clone()
-            scale_boxes(ims[si].shape[1:], predn[:, :4], shape, shapes[si][1])  # native-space pred
+            # For RGB-T, use the first image's shape (both images have same dimensions)
+            img_shape = ims[0].shape[1:] if isinstance(ims, list) else ims.shape[1:]
+            scale_boxes(img_shape, predn[:, :4], shape, shapes[si][1])  # native-space pred
 
             # Evaluate
             if nl:
                 tbox = xywh2xyxy(labels[:, 1:5])  # target boxes
-                scale_boxes(ims[si].shape[1:], tbox, shape, shapes[si][1])  # native-space labels
+                scale_boxes(img_shape, tbox, shape, shapes[si][1])  # native-space labels
                 labelsn = torch.cat((labels[:, 0:1], tbox), 1)  # native-space labels
                 correct = process_batch(predn, labelsn, iouv)
                 if plots:
@@ -297,13 +301,15 @@ def run(
                 save_one_txt(predn, save_conf, shape, file=save_dir / "labels" / f"{path.stem}.txt")
             if save_json:
                 save_one_json(predn, jdict, path, index, class_map)  # append to COCO-JSON dictionary
-            callbacks.run("on_val_image_end", pred, predn, path, names, ims[si])
+            callbacks.run("on_val_image_end", pred, predn, path, names, ims[0] if isinstance(ims, list) else ims)
 
         # Plot images
         if plots and batch_i < 3:
             desc = f"val_batch{batch_i}" if epoch is None else f"val_epoch{epoch}_batch{batch_i}"
-            plot_images(ims, targets, paths, save_dir / f"{desc}_labels.jpg", names)  # labels
-            plot_images(ims, output_to_target(preds), paths, save_dir / f"{desc}_pred.jpg", names)  # pred
+            # For RGB-T, use thermal images for plotting
+            plot_ims = ims[0] if isinstance(ims, list) else ims
+            plot_images(plot_ims, targets, paths, save_dir / f"{desc}_labels.jpg", names)  # labels
+            plot_images(plot_ims, output_to_target(preds), paths, save_dir / f"{desc}_pred.jpg", names)  # pred
 
         callbacks.run("on_val_batch_end", batch_i, ims, targets, paths, shapes, preds)
 
@@ -355,13 +361,16 @@ def run(
             json.dump(jdict, f, indent=2)
 
         LOGGER.info(f"\nEvaluating mAP...")
-
+        save_val_dir = "/home/seok/Deep_learning_project/AUE8088/Miss_rate/focal_loss"
         # Run evaluation: KAIST Multispectral Pedestrian Dataset
         try:
             # HACK: need to generate KAIST_annotation.json for your own validation set
-            if not os.path.exists('utils/eval/KAIST_val-A_annotation.json'):
+            if not os.path.exists('utils/eval/KAIST_val_annotation_labeled.json'):
                 raise FileNotFoundError('Please generate KAIST_annotation.json for your own validation set. (See utils/eval/generate_kaist_ann_json.py)')
-            os.system(f"python3 utils/eval/kaisteval.py --annFile utils/eval/KAIST_val-A_annotation.json --rstFile {pred_json}")
+            
+            # Path 객체를 문자열로 변환하고 --rstFiles 사용
+            eval_fig_path = os.path.join(save_val_dir, f'{w}_predictions.png')
+            os.system(f"python3 utils/eval/kaisteval.py --annFile utils/eval/KAIST_val_annotation_labeled.json --rstFiles {pred_json} --evalFig {eval_fig_path}")
         except Exception as e:
             LOGGER.info(f"kaisteval unable to run: {e}")
 

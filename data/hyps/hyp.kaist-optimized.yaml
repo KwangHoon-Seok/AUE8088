@@ -1,0 +1,37 @@
+# YOLOv5 🚀 by Ultralytics, AGPL-3.0 license
+# KAIST Multispectral Pedestrian Detection 최적화 Hyperparameters
+# 야간 열화상 + 작은 객체 탐지에 특화된 설정
+
+lr0: 0.01 # initial learning rate (SGD=1E-2, Adam=1E-3)
+lrf: 0.1 # final OneCycleLR learning rate (lr0 * lrf)
+momentum: 0.937 # SGD momentum/Adam beta1
+weight_decay: 0.0005 # optimizer weight decay 5e-4
+warmup_epochs: 3.0 # warmup epochs (fractions ok)
+warmup_momentum: 0.8 # warmup initial momentum
+warmup_bias_lr: 0.1 # warmup initial bias lr
+box: 0.05 # box loss gain
+cls: 0.5 # cls loss gain
+cls_pw: 1.0 # cls BCELoss positive_weight
+obj: 1.0 # obj loss gain (scale with pixels)
+obj_pw: 1.0 # obj BCELoss positive_weight
+iou_t: 0.20 # IoU training threshold
+anchor_t: 4.0 # anchor-multiple threshold
+fl_gamma: 0.0 # focal loss gamma (클래스 불균형 해결)
+
+# 🔥 KAIST 데이터셋 특화 Augmentation 설정
+hsv_h: 0.005 # 매우 약한 색조 변화 (열화상 보존)
+hsv_s: 0.3 # 약한 채도 변화 (온도 정보 보존)
+hsv_v: 0.2 # 약한 명도 변화 (야간 조건 고려)
+degrees: 5.0 # 약간의 회전 (보행자 자세 다양성)
+translate: 0.05 # 약한 이동 (작은 객체 보존)
+scale: 0.2 # 약한 크기 변화 (작은 객체 유지)
+shear: 2.0 # 약간의 전단 변형
+perspective: 0.0001 # 매우 약한 원근 변형
+flipud: 0.0 # 상하 플립 비활성화 (보행자 특성상 불필요)
+fliplr: 0.5 # 좌우 플립만 활성화
+mosaic: 0.8 # 모자이크 확률 감소 (작은 객체 보호)
+mixup: 0.0 # MixUp 비활성화 (작은 객체 보호)
+copy_paste: 0.0 # Copy-Paste 비활성화 (부자연스러운 합성 방지)
+
+# Label smoothing for better generalization
+label_smoothing: 0.05 # 약한 label smoothing 

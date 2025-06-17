@@ -1,34 +1,33 @@
 # YOLOv5 🚀 by Ultralytics, AGPL-3.0 license
-# Hyperparameters for medium-augmentation COCO training from scratch
-# python train.py --batch 32 --cfg yolov5m6.yaml --weights '' --data coco.yaml --img 1280 --epochs 300
-# See tutorials for hyperparameter evolution https://github.com/ultralytics/yolov5#tutorials
+# Hyperparameters for RGB-T KAIST dataset training
+# Optimized for thermal + visible image fusion
 
 lr0: 0.01 # initial learning rate (SGD=1E-2, Adam=1E-3)
-lrf: 0.1 # final OneCycleLR learning rate (lr0 * lrf)
+lrf: 0.01 # final OneCycleLR learning rate (lr0 * lrf)
 momentum: 0.937 # SGD momentum/Adam beta1
 weight_decay: 0.0005 # optimizer weight decay 5e-4
 warmup_epochs: 3.0 # warmup epochs (fractions ok)
 warmup_momentum: 0.8 # warmup initial momentum
 warmup_bias_lr: 0.1 # warmup initial bias lr
-box: 0.05 # box loss gain
-cls: 0.3 # cls loss gain
+box: 0.05 # box loss gain - 바운딩 박스 정확도 중시
+cls: 0.3 # cls loss gain - 클래스 손실 약간 감소 (person 클래스 위주)
 cls_pw: 1.0 # cls BCELoss positive_weight
-obj: 0.7 # obj loss gain (scale with pixels)
+obj: 0.7 # obj loss gain - 객체 존재 확률 중시 (작은 객체 검출)
 obj_pw: 1.0 # obj BCELoss positive_weight
 iou_t: 0.20 # IoU training threshold
 anchor_t: 4.0 # anchor-multiple threshold
 # anchors: 3  # anchors per output layer (0 to ignore)
 fl_gamma: 0.0 # focal loss gamma (efficientDet default gamma=1.5)
-hsv_h: 0.015 # image HSV-Hue augmentation (fraction)
-hsv_s: 0.7 # image HSV-Saturation augmentation (fraction)
-hsv_v: 0.4 # image HSV-Value augmentation (fraction)
-degrees: 0.0 # image rotation (+/- deg)
-translate: 0.1 # image translation (+/- fraction)
-scale: 0.9 # image scale (+/- gain)
-shear: 0.0 # image shear (+/- deg)
-perspective: 0.0 # image perspective (+/- fraction), range 0-0.001
-flipud: 0.0 # image flip up-down (probability)
-fliplr: 0.5 # image flip left-right (probability)
-mosaic: 1.0 # image mosaic (probability)
-mixup: 0.1 # image mixup (probability)
-copy_paste: 0.0 # segment copy-paste (probability)
+hsv_h: 0.0 # image HSV-Hue augmentation - 비활성화
+hsv_s: 0.0 # image HSV-Saturation augmentation - 비활성화
+hsv_v: 0.0 # image HSV-Value augmentation - 비활성화
+degrees: 0.0 # image rotation (+/- deg) - 비활성화
+translate: 0.0 # image translation (+/- fraction) - 비활성화
+scale: 0.0 # image scale (+/- gain) - 비활성화
+shear: 0.0 # image shear (+/- deg) - 비활성화
+perspective: 0.0 # image perspective (+/- fraction) - 비활성화
+flipud: 0.0 # image flip up-down - 비활성화
+fliplr: 0.0 # image flip left-right - 비활성화
+mosaic: 1.0 # image mosaic - 활성화 (유일한 augmentation)
+mixup: 0.25 # image mixup - RGBT용으로 활성화
+copy_paste: 0.0 # segment copy-paste - 비활성화

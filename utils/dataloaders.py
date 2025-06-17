@@ -34,6 +34,7 @@ from utils.augmentations import (
     copy_paste,
     letterbox,
     mixup,
+    mixup_rgbt,
     random_perspective,
 )
 from utils.general import (
@@ -560,7 +561,8 @@ class LoadImagesAndLabels(Dataset):
         self.hyp = hyp
         self.image_weights = image_weights
         self.rect = False if image_weights else rect
-        self.mosaic = self.augment and not self.rect  # load 4 images at a time into a mosaic (only during training)
+        # self.mosaic = self.augment and not self.rect  # load 4 images at a time into a mosaic (only during training)
+        self.mosaic = True
         self.mosaic_border = [-img_size // 2, -img_size // 2]
         self.stride = stride
         self.path = path
@@ -1094,8 +1096,8 @@ class LoadRGBTImagesAndLabels(LoadImagesAndLabels):
 
         super().__init__(path, **kwargs)
 
-        # TODO: make mosaic augmentation work
-        self.mosaic = False
+        # Enable mosaic augmentation for training
+        self.mosaic = True  # 강제 활성화
 
         # Set ignore flag
         cond = self.ignore_settings['train' if is_train else 'test']
@@ -1200,86 +1202,86 @@ class LoadRGBTImagesAndLabels(LoadImagesAndLabels):
         hyp = self.hyp
         mosaic = self.mosaic and random.random() < hyp["mosaic"]
         if mosaic:
-            raise NotImplementedError('Please make "mosaic" augmentation work!')
+            # Load mosaic
+            imgs, labels = self.load_mosaic(index)
+            # For mosaic, provide default shapes info to avoid validation errors
+            h, w = imgs[0].shape[:2]  # Use first modality's shape
+            shapes = ((h, w), (h, w)), ((1.0, 1.0), (0.0, 0.0))  # ((h0, w0), (h, w)), ((ratio_h, ratio_w), (pad_h, pad_w))
 
-            # TODO: Load mosaic
-            img, labels = self.load_mosaic(index)
-            shapes = None
-
-            # TODO: MixUp augmentation
+            # MixUp augmentation
             if random.random() < hyp["mixup"]:
-                img, labels = mixup(img, labels, *self.load_mosaic(random.choice(self.indices)))
+                imgs2, labels2 = self.load_mosaic(random.choice(self.indices))
+                imgs, labels = mixup_rgbt(imgs, labels, imgs2, labels2)
 
         else:
             # Load image
             # hw0s: original shapes, hw1s: resized shapes
             imgs, hw0s, hw1s = self.load_image(index)
 
+            # Letterbox for both modalities
+            shape = self.batch_shapes[self.batch[index]] if self.rect else self.img_size  # final letterboxed shape
+            imgs_processed = []
             for ii, (img, (h0, w0), (h, w)) in enumerate(zip(imgs, hw0s, hw1s)):
-                # Letterbox
-                shape = self.batch_shapes[self.batch[index]] if self.rect else self.img_size  # final letterboxed shape
                 img, ratio, pad = letterbox(img, shape, auto=False, scaleup=self.augment)
-                shapes = (h0, w0), (ratio, pad)  # for COCO mAP rescaling
+                imgs_processed.append(img)
+            
+            imgs = imgs_processed
+            shapes = (hw0s[0], hw0s[1]), (ratio, pad)  # for COCO mAP rescaling (assume same shape for both modalities)
 
-                labels = self.labels[index].copy()
-                if labels.size:  # normalized xywh to pixel xyxy format
-                    labels[:, 1:3] += labels[:, 3:5] / 2.0      # (x_lefttop, y_lefttop) -> (x_center, y_center)
-                    labels[:, 1:] = xywhn2xyxy(labels[:, 1:], ratio[0] * w, ratio[1] * h, padw=pad[0], padh=pad[1])
+            labels = self.labels[index].copy()
+            if labels.size:  
+                # KAIST format: (cls, x_lefttop_norm, y_lefttop_norm, width_norm, height_norm, occlevel)
+                # Need to convert to xyxy pixel coordinates
+                
+                # Remove occlusion level (last column) - keep only first 5 columns
+                labels = labels[:, :5]  # (cls, x_lefttop, y_lefttop, width, height)
+                
+                # Convert KAIST lefttop format to pixel xyxy coordinates
+                # x_lefttop, y_lefttop, width, height -> x1, y1, x2, y2
+                x1 = labels[:, 1] * ratio[0] * w + pad[0]  # x_lefttop to pixel
+                y1 = labels[:, 2] * ratio[1] * h + pad[1]  # y_lefttop to pixel  
+                x2 = x1 + labels[:, 3] * ratio[0] * w      # x1 + width
+                y2 = y1 + labels[:, 4] * ratio[1] * h      # y1 + height
+                
+                # Create xyxy format labels for augmentation
+                labels[:, 1] = x1
+                labels[:, 2] = y1  
+                labels[:, 3] = x2
+                labels[:, 4] = y2
 
-                if self.augment:
-                    raise NotImplementedError('Please make data augmentation work!')
+            if self.augment:
+                # Ensure both images have exactly the same size after letterbox
+                img_lwir, img_vis = imgs[0], imgs[1]  # lwir=0, visible=1
+                h, w = img_lwir.shape[:2]
+                
+                # Resize visible image to match lwir image exactly if needed
+                if img_vis.shape[:2] != (h, w):
+                    img_vis = cv2.resize(img_vis, (w, h))
+                
+                # Skip all geometric transformations - only mosaic and mixup allowed
+                imgs = [img_lwir, img_vis]
 
-                    img, labels = random_perspective(
-                        img,
-                        labels,
-                        degrees=hyp["degrees"],
-                        translate=hyp["translate"],
-                        scale=hyp["scale"],
-                        shear=hyp["shear"],
-                        perspective=hyp["perspective"],
-                    )
+        nl = len(labels)  # number of labels
+        if nl:
+            # Convert from pixel xyxy to normalized xywh (YOLO/COCO format)
+            labels[:, 1:5] = xyxy2xywhn(labels[:, 1:5], w=imgs[0].shape[1], h=imgs[0].shape[0], clip=True, eps=1e-3)
 
-                nl = len(labels)  # number of labels
-                if nl:
-                    labels[:, 1:5] = xyxy2xywhn(labels[:, 1:5], w=img.shape[1], h=img.shape[0], clip=True, eps=1e-3)
+        if self.augment and not mosaic:
+            # Skip all remaining augmentations - only mosaic and mixup allowed
+            pass
 
-                if self.augment:
-                    # Albumentations
-                    img, labels = self.albumentations(img, labels)
-                    nl = len(labels)  # update after albumentations
+        labels_out = torch.zeros((nl, 6))
+        if nl:
+            labels_out[:, 1:] = torch.from_numpy(labels)
 
-                    # HSV color-space
-                    augment_hsv(img, hgain=hyp["hsv_h"], sgain=hyp["hsv_s"], vgain=hyp["hsv_v"])
+        # Convert both images
+        imgs_tensor = []
+        for img in imgs:
+            img = img.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
+            img = np.ascontiguousarray(img)
+            imgs_tensor.append(torch.from_numpy(img))
 
-                    # Flip up-down
-                    if random.random() < hyp["flipud"]:
-                        img = np.flipud(img)
-                        if nl:
-                            labels[:, 2] = 1 - labels[:, 2]
-
-                    # Flip left-right
-                    if random.random() < hyp["fliplr"]:
-                        img = np.fliplr(img)
-                        if nl:
-                            labels[:, 1] = 1 - labels[:, 1]
-
-                    # Cutouts
-                    # labels = cutout(img, labels, p=0.5)
-                    # nl = len(labels)  # update after cutout
-
-                labels_out = torch.zeros((nl, 7))
-                if nl:
-                    labels_out[:, 1:] = torch.from_numpy(labels)
-
-                # Convert
-                img = img.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
-                img = np.ascontiguousarray(img)
-
-                imgs[ii] = torch.from_numpy(img)
-
-        # Drop occlusion level
-        labels_out = labels_out[:, :-1]
-        return imgs, labels_out, self.im_files[index], shapes, index
+        return imgs_tensor, labels_out, self.im_files[index], shapes, index
 
     def load_image(self, i):
         """
@@ -1329,6 +1331,114 @@ class LoadRGBTImagesAndLabels(LoadImagesAndLabels):
     @staticmethod
     def collate_fn4(batch):
         raise NotImplementedError
+
+    def load_mosaic(self, index):
+        """Loads a 4-image mosaic for RGBT YOLOv5, combining 1 selected and 3 random images, with labels and segments."""
+        labels4, segments4 = [], []
+        s = self.img_size
+        yc, xc = (int(random.uniform(-x, 2 * s + x)) for x in self.mosaic_border)  # mosaic center x, y
+        indices = [index] + random.choices(self.indices, k=3)  # 3 additional image indices
+        random.shuffle(indices)
+        
+        # Initialize mosaic images for both modalities
+        img4_lwir = np.full((s * 2, s * 2, 3), 114, dtype=np.uint8)  # base image for lwir
+        img4_vis = np.full((s * 2, s * 2, 3), 114, dtype=np.uint8)   # base image for visible
+        
+        for i, index in enumerate(indices):
+            # Load images for both modalities
+            imgs, _, img_shapes = self.load_image(index)  # img_shapes is list of shapes
+            img_lwir, img_vis = imgs[0], imgs[1]  # lwir=0, visible=1
+            h, w = img_shapes[0][:2]  # Use first modality's shape (both should be same)
+
+            # place imgs in img4
+            if i == 0:  # top left
+                x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
+                x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # xmin, ymin, xmax, ymax (small image)
+            elif i == 1:  # top right
+                x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, s * 2), yc
+                x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
+            elif i == 2:  # bottom left
+                x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(s * 2, yc + h)
+                x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
+            elif i == 3:  # bottom right
+                x1a, y1a, x2a, y2a = xc, yc, min(xc + w, s * 2), min(s * 2, yc + h)
+                x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
+
+            # Apply to both modalities separately
+            img4_lwir[y1a:y2a, x1a:x2a] = img_lwir[y1b:y2b, x1b:x2b]  # place lwir image
+            img4_vis[y1a:y2a, x1a:x2a] = img_vis[y1b:y2b, x1b:x2b]    # place visible image
+            
+            padw = x1a - x1b
+            padh = y1a - y1b
+
+            # Labels
+            labels, segments = self.labels[index].copy(), self.segments[index].copy()
+            if labels.size:
+                # KAIST format: (cls, x_lefttop_norm, y_lefttop_norm, width_norm, height_norm, occlevel)
+                # Need to convert to xyxy pixel coordinates
+                
+                # Remove occlusion level (last column) - keep only first 5 columns
+                labels = labels[:, :5]  # (cls, x_lefttop, y_lefttop, width, height)
+                
+                # Convert KAIST lefttop format to pixel xyxy coordinates
+                # x_lefttop, y_lefttop, width, height -> x1, y1, x2, y2
+                x1 = labels[:, 1] * w + padw  # x_lefttop to pixel
+                y1 = labels[:, 2] * h + padh  # y_lefttop to pixel  
+                x2 = x1 + labels[:, 3] * w    # x1 + width
+                y2 = y1 + labels[:, 4] * h    # y1 + height
+                
+                # Create xyxy format labels for augmentation
+                labels[:, 1] = x1
+                labels[:, 2] = y1  
+                labels[:, 3] = x2
+                labels[:, 4] = y2
+                segments = [xyn2xy(x, w, h, padw, padh) for x in segments]
+            else:
+                # Empty labels case
+                labels = np.zeros((0, 5), dtype=np.float32)
+                segments = []  # Initialize empty segments list
+            labels4.append(labels)
+            segments4.extend(segments)
+
+        # Concat/clip labels
+        labels4 = np.concatenate(labels4, 0)
+        for x in (labels4[:, 1:], *segments4):
+            np.clip(x, 0, 2 * s, out=x)  # clip when using random_perspective()
+
+        # Augment - ensure both images have same size and apply consistent augmentation
+        h, w = img4_lwir.shape[:2]
+        
+        # Resize visible image to match lwir image exactly if needed
+        if img4_vis.shape[:2] != (h, w):
+            img4_vis = cv2.resize(img4_vis, (w, h))
+        
+        # Apply copy_paste to lwir image only
+        img4_lwir, labels4, segments4 = copy_paste(img4_lwir, labels4, segments4, p=self.hyp["copy_paste"])
+        
+        # Concatenate both images side by side for consistent augmentation
+        img4_concat = np.concatenate([img4_lwir, img4_vis], axis=1)  # shape: (h, 2*w, 3)
+        
+        # Apply geometric transformations
+        img4_concat, labels4 = random_perspective(
+            img4_concat,
+            labels4,
+            segments4,
+            degrees=self.hyp["degrees"],
+            translate=self.hyp["translate"],
+            scale=self.hyp["scale"],
+            shear=self.hyp["shear"],
+            perspective=self.hyp["perspective"],
+            border=self.mosaic_border,
+        )  # border to remove
+        
+        # Split back to two images of equal size
+        concat_h, concat_w = img4_concat.shape[:2]
+        split_w = concat_w // 2
+        img4_lwir = img4_concat[:, :split_w].copy()
+        img4_vis = img4_concat[:, split_w:split_w*2].copy()
+
+        return [img4_lwir, img4_vis], labels4
+
 
 # Ancillary functions --------------------------------------------------------------------------------------------------
 def flatten_recursive(path=DATASETS_DIR / "coco128"):
